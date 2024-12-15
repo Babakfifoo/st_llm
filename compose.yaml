@@ -1,0 +1,41 @@
+services:
+  streamlit:
+    container_name: app
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - '8501:8501'
+    volumes:
+      - './data:/usr/src/app/data'
+      - './project:/usr/src/app/project'
+    environment:
+      - USER_ID=1000
+      - GROUP_ID=1000
+      - OLLAMA_URL=http://ollama:11434
+    networks:
+      - llm_network
+
+  ollama:
+    image: ollama/ollama
+    container_name: ollama
+    healthcheck:
+      test: ["CMD-SHELL", "ollama ps || exit 1"]
+      interval: 10s
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    volumes:
+      - ./ollama:/root/.ollama
+      - ./entrypoint.sh:/entrypoint.sh
+    tty: true
+    environment:
+      - OLLAMA_KEEP_ALIVE=5m
+      - OLLAMA_FLASH_ATTENTION=0
+    entrypoint: ["/usr/bin/bash", "/entrypoint.sh"]
+    networks:
+      - llm_network
+
+networks:
+  llm_network:
+    driver: bridge
