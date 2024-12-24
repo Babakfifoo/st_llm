@@ -1,15 +1,18 @@
 # %%
 import os
 import json
-import requests
 import datetime
-
+from auth0_component import login_button
 import streamlit as st
 
 
 from ollama import Client
 
 OLLAMA_URL = os.environ.get('OLLAMA_URL')
+
+
+clientId = "UKshOU7qXrQYrZhsfcVv8jiclL3L3XUO"
+domain = "dev-k3mqleysq13lejjc.eu.auth0.com"
 
 
 client = Client(
