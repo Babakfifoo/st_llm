@@ -90,8 +90,8 @@ if __name__ == "__main__":
 
     st.set_page_config(layout="wide", page_title="Ollama Chat", page_icon="🦙")
 
-    st.sidebar.title(f"Ollama Chat 🦙 \n {OLLAMA_URL}")
-    llm_name = "llama3.2:1b"
+    st.sidebar.title(f"Ollama Chat 🦙: {OLLAMA_URL}")
+    llm_name = "phi3.5"
 
     conversation_key = f"model_{llm_name}"
     prompt = st.chat_input(f"Ask '{llm_name}' a question ...")

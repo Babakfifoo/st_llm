@@ -11,8 +11,6 @@ RUN apt-get install software-properties-common -y
 RUN apt-get install git  -y
 
 RUN apt-get clean && rm -rf /var/lib/apt/lists/*
-# Copy the entire app folder
-COPY . .
 
 # Copy requirements.txt
 COPY requirements.txt .
@@ -21,6 +19,8 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 EXPOSE 8501
+# Copy the entire app folder
+COPY . .
 
 HEALTHCHECK CMD curl --fail http://localhost:8501/_stcore/health
 

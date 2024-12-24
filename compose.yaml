@@ -17,24 +17,20 @@ services:
       - llm_network
 
   ollama:
-    image: ollama/ollama
-    container_name: ollama
-    healthcheck:
-      test: ["CMD-SHELL", "ollama ps || exit 1"]
-      interval: 10s
-    restart: unless-stopped
-    ports:
-      - "11434:11434"
     volumes:
-      - ./ollama:/root/.ollama
-      - ./entrypoint.sh:/entrypoint.sh
+        - ollama:/root/.ollama
+    image: ollama/ollama:latest
+    ports:
+      - 11434:11434
+    container_name: ollama
+    pull_policy: always
     tty: true
-    environment:
-      - OLLAMA_KEEP_ALIVE=5m
-      - OLLAMA_FLASH_ATTENTION=0
-    entrypoint: ["/usr/bin/bash", "/entrypoint.sh"]
+    restart: unless-stopped
     networks:
       - llm_network
+
+volumes:
+  ollama:
 
 networks:
   llm_network:
