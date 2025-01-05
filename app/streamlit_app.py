@@ -76,7 +76,12 @@ st.set_page_config(
 col1, col2 = st.columns(spec=[0.3, 0.7])
 
 
-m = folium.Map(location=[60.164097, 24.941238], zoom_start=14)
+m = folium.Map(
+    location=[60.164097, 24.941238],
+    zoom_start=14,
+    tiles="Cartodb Positron"
+    )
+
 m.add_child(child=folium.LayerControl())
 
 draw = Draw(
@@ -91,11 +96,13 @@ draw = Draw(
     edit_options={"edit": False},
 )
 m.add_child(draw)
+
 fg = folium.FeatureGroup(name="Buildings")
 
 
 def style_func(feature):
     default = {
+        "opacity": 1.0,
         "fillColor": "grey",
         "color": "black",
         "weight": 1,
@@ -111,7 +118,6 @@ if "Buildings" in st.session_state.keys():
     fg.add_child(
         child=folium.GeoJson(
             data=st.session_state["Buildings"],
-            tiles='Stamen Toner',
             tooltip=folium.GeoJsonTooltip(
                 fields=["subtype_clean", "floor_area", "num_floors", "Footprint"],
                 aliases=["Usage", "Floor area (m2):", "Floor count:", "Area (m2):"],
