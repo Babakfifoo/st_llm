@@ -1,3 +1,24 @@
+# too many libs must clean up
 pandas
-streamlit
-ollama
+shapely
+numpy
+geopandas
+h3
+scikit-learn
+geocoder
+requests
+plotly
+matplotlib
+boto3
+s3fs
+duckdb
+ibis-framework[duckdb,geospatial,pandas]
+jupyterlab
+ipykernel
+ipywidgets
+keplergl
+tqdm
+owslib
+rasterio
+pyarrow
+overturemaps

@@ -1,108 +1,200 @@
 # %%
-import os
-import json
-import datetime
-from auth0_component import login_button
+import folium
 import streamlit as st
+import geopandas as gpd
+from streamlit_folium import st_folium
+from folium.plugins import Draw
+import math
+import duckdb
+from shapely import wkt
+from llm.prompt_generator import generate_answer
+import json
+# %%
 
 
-from ollama import Client
+def get_bbox(st_data):
+    bbox = [
+        st_data["bounds"]["_southWest"]["lng"],
+        st_data["bounds"]["_southWest"]["lat"],
+        st_data["bounds"]["_northEast"]["lng"],
+        st_data["bounds"]["_northEast"]["lat"],
+    ]
+    return bbox
 
-OLLAMA_URL = os.environ.get('OLLAMA_URL')
+
+@st.cache_data
+def get_buildings(bbox):
+    con = duckdb.connect()
+    con.sql(query="""
+    INSTALL spatial;
+    LOAD spatial;
+    """)
+    url = "./data/HMA_buildings_prepared.parquet"
+    query = """
+        SELECT 
+            CAST(num_floors AS INTEGER) AS num_floors, AREA AS Footprint,
+            subtype_clean, floor_area, est_num_floors, residential, commercial,
+            ST_AsText(geometry::GEOMETRY) AS geometry
+        FROM read_parquet('{url}')
+        WHERE 
+            CAST(bbox.xmin AS FLOAT) > {xmin} AND
+            CAST(bbox.xmax AS FLOAT) < {xmax} AND
+            CAST(bbox.ymin AS FLOAT) > {ymin} AND
+            CAST(bbox.ymax AS FLOAT) < {ymax}
+    """
+
+    proper_query = query.format(
+        xmin=bbox[0], ymin=bbox[1], xmax=bbox[2], ymax=bbox[3], url=url
+        )
+
+    result = con.sql(proper_query).df()
+    result = gpd.GeoDataFrame(
+        result, geometry=result["geometry"].apply(wkt.loads), crs=4326
+        )
+    return result
 
 
-clientId = "UKshOU7qXrQYrZhsfcVv8jiclL3L3XUO"
-domain = "dev-k3mqleysq13lejjc.eu.auth0.com"
+def get_bbox_circle(lon, lat, radius=500):
+
+    radius_in_degrees = (radius / 1000) / 6371.0  # earth radius
+    min_lat = lat - math.degrees(radius_in_degrees)
+    max_lat = lat + math.degrees(radius_in_degrees)
+    min_lng = lon - math.degrees(radius_in_degrees / math.cos(math.radians(lat)))
+    max_lng = lon + math.degrees(radius_in_degrees / math.cos(math.radians(lat)))
+
+    bbox = [min_lng, min_lat, max_lng, max_lat]
+    return bbox
 
 
-client = Client(
-  host=OLLAMA_URL
+# %%
+st.set_page_config(
+    page_title="Floor Area Agent",
+    layout='wide',
+    initial_sidebar_state="expanded"
+    )
+
+col1, col2 = st.columns(spec=[0.3, 0.7])
+
+
+m = folium.Map(location=[60.164097, 24.941238], zoom_start=14)
+m.add_child(child=folium.LayerControl())
+
+draw = Draw(
+    draw_options={
+        "polyline": False,
+        "rectangle": False,
+        "polygon": False,
+        "circle": False,
+        "marker": True,
+        "circlemarker": False,
+    },
+    edit_options={"edit": False},
 )
+m.add_child(draw)
+fg = folium.FeatureGroup(name="Buildings")
 
 
-def st_ollama(model_name, user_question, chat_history_key):
+def style_func(feature):
+    default = {
+        "fillColor": "grey",
+        "color": "black",
+        "weight": 1,
+        }
+    if feature["properties"]["residential"] == 1:
+        default["fillColor"] = "yellow"
+    if feature["properties"]["commercial"] == 1:
+        default["fillColor"] = "red"
 
-    if chat_history_key not in st.session_state.keys():
-        st.session_state[chat_history_key] = []
+    return default
 
-    print_chat_history_timeline(chat_history_key)
+if "Buildings" in st.session_state.keys():
+    fg.add_child(
+        child=folium.GeoJson(
+            data=st.session_state["Buildings"],
+            tiles='Stamen Toner',
+            tooltip=folium.GeoJsonTooltip(
+                fields=["subtype_clean", "floor_area", "num_floors", "Footprint"],
+                aliases=["Usage", "Floor area (m2):", "Floor count:", "Area (m2):"],
+                labels=True,
+                ),
+            style_function=style_func
+            )
+        )
 
-    # run the model
-    if user_question:
-        st.session_state[chat_history_key].append({"content": f"{user_question}", "role": "user"})
-        with st.chat_message("question", avatar="🧑‍🚀"):
-            st.write(user_question)
+if "last_clicked" in st.session_state.keys():
+    fg.add_child(child=st.session_state["last_clicked"]["marker"])
 
-        messages = [dict(content=message["content"], role=message["role"]) for message in st.session_state[chat_history_key]]
+with col2:
+    values = st.slider(
+        label="Select the radius (m)",
+        min_value=100,
+        max_value=1000,
+        value=500,
+        step=50
+        )
+    st.write("Radius (m)", values)
+    st_data = st_folium(fig=m, width=1200, height=800, feature_group_to_add=fg)
+    if "Buildings" not in st.session_state:
+        if st_data["last_clicked"]:
+            lat = st_data["last_clicked"]["lat"]
+            lon = st_data["last_clicked"]["lng"]
+            st.session_state["last_clicked"] = {
+                "lat": lat,
+                "lon": lon,
+                "marker": folium.Marker(location=[lat, lon]),
+                }
 
-        def llm_stream(response):
-            response = client.chat(model_name, messages, stream=True)
-            for chunk in response:
-                yield chunk['message']['content']
+    if "Buildings" in st.session_state.keys():
+        if st.button(label="Clear Map"):
+            st.session_state.pop("Buildings")
 
-        # streaming response
-        with st.chat_message("response", avatar="🤖"):
-            chat_box = st.empty()
-            response_message = chat_box.write_stream(llm_stream(messages))
+    if st.button(label="Get the data"):
+        if 'last_clicked' in st.session_state:
+            bbox = get_bbox_circle(
+                lon=st.session_state["last_clicked"]["lon"],
+                lat=st.session_state["last_clicked"]["lat"],
+                radius=values
+                )
+            st.write(f"getting:{bbox}")
+            buildings = get_buildings(bbox=bbox).assign(floor_area=lambda x: x["floor_area"].round())
+            st.session_state["prompt_stats"] = {
+                "Mean building Footprint area (m2)": buildings["Footprint"].mean(),
+                "Mean floor count":  buildings["num_floors"].mean(),
+                "Mean Floor area (m2)":  buildings["floor_area"].mean(),
+                "share of residential building (%)": (
+                    buildings.query("subtype_clean == 'residential'").shape[0] * 100 / buildings.shape[0]
+                    )
+                }
 
-        st.session_state[chat_history_key].append({"content": f"{response_message}", "role": "assistant"})
-
-        return response_message
-
-
-def print_chat_history_timeline(chat_history_key):
-    for message in st.session_state[chat_history_key]:
-        role = message["role"]
-        if role == "user":
-            with st.chat_message("user", avatar="🧑‍🚀"): 
-                question = message["content"]
-                st.markdown(f"{question}", unsafe_allow_html=True)
-        elif role == "assistant":
-            with st.chat_message("assistant", avatar="🤖"):
-                st.markdown(message["content"], unsafe_allow_html=True)
-
-
-# -- helpers --
-
-
-
-
-def save_conversation(llm_name, conversation_key):
-
-    OUTPUT_DIR = "llm_conversations"
-    OUTPUT_DIR = os.path.join(os.getcwd(), OUTPUT_DIR)
-
-    timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
-    filename = f"{OUTPUT_DIR}/{timestamp}_{llm_name.replace(':', '-')}"
-
-    if not os.path.exists(OUTPUT_DIR):
-        os.makedirs(OUTPUT_DIR)
-
-    if st.session_state[conversation_key]:
-
-        if st.sidebar.button("Save conversation"):
-            with open(f"{filename}.json", "w") as f:
-                json.dump(st.session_state[conversation_key], f, indent=4)
-            st.success(f"Conversation saved to {filename}.json")
+            st.session_state["Buildings"] = buildings
+            st.session_state["ongoing_prompt"] = 1
+            st.success("Buildings acquired")
+        else:
+            st.warning("Please click on the location of interest")
 
 
-if __name__ == "__main__":
+with col1:
+    st.title("Your AI Assistant:")
+    if "messages" not in st.session_state:
+        st.session_state["messages"] = [{"role": "assistant", "content": " Hi! I am your assistant. What would you like to know?"}]
+    for message in st.session_state["messages"]:
+        if message["content"][:4] == "skip":
+            continue
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"])
+    if prompt := st.chat_input("Enter prompt here.."):
+        # add latest message to history in format {role, content}
+        st.session_state["messages"].append({"role": "user", "content": prompt})
 
-    st.set_page_config(layout="wide", page_title="Ollama Chat", page_icon="🦙")
+        with st.chat_message(name="user"):
+            st.markdown(body=prompt)
 
-    st.sidebar.title(f"Ollama Chat 🦙: {OLLAMA_URL}")
-    llm_name = "phi3.5"
-
-    conversation_key = f"model_{llm_name}"
-    prompt = st.chat_input(f"Ask '{llm_name}' a question ...")
-
-    st_ollama(llm_name, prompt, conversation_key)
-    
-    if st.session_state[conversation_key]:
-        clear_conversation = st.sidebar.button("Clear chat")
-        if clear_conversation:
-            st.session_state[conversation_key] = []
-            st.rerun()
-
-    # save conversation to file
-    save_conversation(llm_name, conversation_key)
+        with st.chat_message(name="assistant"):
+            message = st.write_stream(stream=generate_answer(
+                messages=st.session_state["messages"],
+                user_question=prompt,
+                information=json.dumps(
+                    obj=st.session_state.get("prompt_stats", default=""), 
+                    indent=4)
+                ))
+            st.session_state["messages"].append({"role": "assistant", "content": message})
